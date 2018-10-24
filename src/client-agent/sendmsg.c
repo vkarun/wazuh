@@ -33,7 +33,7 @@ int send_msg(const char *msg, ssize_t msg_length)
         error = errno;
     } else {
         w_mutex_lock(&send_mutex);
-        retval = OS_SendSecureTCP(agt->sock, msg_size, crypt_msg);
+        retval = OS_SendSecureTCP(agt->sock, msg_size, crypt_msg, 0);
         error = errno;
         w_mutex_unlock(&send_mutex);
     }
