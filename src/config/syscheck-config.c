@@ -13,9 +13,9 @@
 
 
 int dump_syscheck_entry(syscheck_config *syscheck, const char *entry, int vals, int reg,
-        const char *restrictfile, int recursion_limit, const char *tag)
+        const char *restrictfile, int recursion_limit, const char *tag, int overwrite)
 {
-    unsigned int pl = 0;
+    unsigned int pl = overwrite;
 
     if (reg == 1) {
 #ifdef WIN32
@@ -26,7 +26,7 @@ int dump_syscheck_entry(syscheck_config *syscheck, const char *entry, int vals, 
             syscheck->registry[pl + 1].tag = NULL;
             syscheck->registry[pl].arch = vals;
             os_strdup(entry, syscheck->registry[pl].entry);
-        } else {
+        } else if (pl == 0) {
             while (syscheck->registry[pl].entry != NULL) {
                 pl++;
             }
@@ -37,6 +37,11 @@ int dump_syscheck_entry(syscheck_config *syscheck, const char *entry, int vals, 
             syscheck->registry[pl + 1].tag = NULL;
             syscheck->registry[pl].arch = vals;
             os_strdup(entry, syscheck->registry[pl].entry);
+        } else {
+            os_free(syscheck->registry[pl].entry);
+            os_strdup(entry, syscheck->registry[pl].entry);
+            os_free(syscheck->registry[pl].tag);
+            syscheck->registry[pl].arch = vals;
         }
 
         if (tag) {
@@ -82,7 +87,7 @@ int dump_syscheck_entry(syscheck_config *syscheck, const char *entry, int vals, 
             os_calloc(2, sizeof(char *), syscheck->tag);
             syscheck->tag[pl] = NULL;
             syscheck->tag[pl + 1] = NULL;
-        } else {
+        } else if (pl == 0) {
             while (syscheck->dir[pl] != NULL) {
                 pl++;
             }
@@ -114,7 +119,16 @@ int dump_syscheck_entry(syscheck_config *syscheck, const char *entry, int vals, 
                        syscheck->tag);
             syscheck->tag[pl] = NULL;
             syscheck->tag[pl + 1] = NULL;
+        } else {
+            os_free(syscheck->dir[pl]);
+            os_strdup(entry, syscheck->dir[pl]);
+            syscheck->opts[pl] = vals;
+            os_free(syscheck->filerestrict[pl]);
+            syscheck->recursion_level[pl] = recursion_limit;
+            os_free(syscheck->tag);
+            
         }
+
         if (restrictfile) {
             os_calloc(1, sizeof(OSMatch), syscheck->filerestrict[pl]);
             if (!OSMatch_Compile(restrictfile, syscheck->filerestrict[pl], 0)) {
@@ -250,7 +264,8 @@ int read_reg(syscheck_config *syscheck, char *entries, int arch, char *tag)
 
             /* Duplicated entry */
             if (syscheck->registry[i].arch == arch && strcmp(syscheck->registry[i].entry, tmp_entry) == 0) {
-                merror(SK_DUP, tmp_entry);
+                mdebug2("Overwriting the registration entry: %s", syscheck->registry[i].entry);
+                dump_syscheck_entry(syscheck, tmp_entry, arch, 1, NULL, 0, clean_tag, i);
                 return (1);
             }
             i++;
@@ -264,7 +279,7 @@ int read_reg(syscheck_config *syscheck, char *entries, int arch, char *tag)
         }
 
         /* Add new entry */
-        dump_syscheck_entry(syscheck, tmp_entry, arch, 1, NULL, 0, clean_tag);
+        dump_syscheck_entry(syscheck, tmp_entry, arch, 1, NULL, 0, clean_tag, 0);
 
         if (clean_tag)
             free(clean_tag);
@@ -611,9 +626,30 @@ static int read_attr(syscheck_config *syscheck, const char *dirs, char **g_attrs
         /* Add directory - look for the last available */
         j = 0;
         while (syscheck->dir && syscheck->dir[j]) {
+            char filepath[OS_MAXSTR];
+#ifdef WIN32
+            if(!ExpandEnvironmentStrings(tmp_dir, filepath, sizeof(filepath) - 1)){
+                merror("Could not expand the environment variable %s (%ld)", filepath, GetLastError());
+                continue;
+            }
+            str_lowercase(filepath);
+#endif
+            /* Change forward slashes to backslashes on entry */
+            char *ptfile = strchr(filepath, '/');
+            while (ptfile) {
+                *ptfile = '\\';
+
+                ptfile++;
+                ptfile = strchr(ptfile, '/');
+            }
+            ptfile += strlen(filepath + 1);
+            if (*ptfile == '/' || *ptfile == '\\') {
+                *ptfile = '\0';
+            }
             /* Duplicate entry */
             if (strcmp(syscheck->dir[j], tmp_dir) == 0) {
-                merror(SK_DUP, tmp_dir);
+                mdebug2("Overwriting the file entry %s", tmp_dir);
+                dump_syscheck_entry(syscheck, tmp_dir, opts, 0, restrictfile, recursion_limit, clean_tag, j);
                 ret = 1;
                 goto out_free;
             }
@@ -645,17 +681,17 @@ static int read_attr(syscheck_config *syscheck, const char *dirs, char **g_attrs
             }
 
             while (g.gl_pathv[gindex]) {
-                dump_syscheck_entry(syscheck, g.gl_pathv[gindex], opts, 0, restrictfile, recursion_limit, clean_tag);
+                dump_syscheck_entry(syscheck, g.gl_pathv[gindex], opts, 0, restrictfile, recursion_limit, clean_tag, 0);
                 gindex++;
             }
 
             globfree(&g);
         }
         else {
-            dump_syscheck_entry(syscheck, tmp_dir, opts, 0, restrictfile, recursion_limit, clean_tag);
+            dump_syscheck_entry(syscheck, tmp_dir, opts, 0, restrictfile, recursion_limit, clean_tag, 0);
         }
 #else
-	    dump_syscheck_entry(syscheck, tmp_dir, opts, 0, restrictfile, recursion_limit, clean_tag);
+	    dump_syscheck_entry(syscheck, tmp_dir, opts, 0, restrictfile, recursion_limit, clean_tag, 0);
 #endif
 
         if (restrictfile) {
